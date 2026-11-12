@@ -1,13 +1,17 @@
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  // Resolves the path aliases declared in tsconfig.json, including the ones
-  // added by `nest g library`.
-  plugins: [tsconfigPaths()],
+  resolve: { tsconfigPaths: true },
   test: {
     globals: true,
     root: './',
     include: ['**/*.spec.ts'],
+    // In-memory databases only — unit tests never touch ./database/.
+    env: {
+      SQLITE_DATABASE_PATH: ':memory:',
+      SQLITE_CACHE_PATH: ':memory:',
+      SQLITE_KV_PATH: ':memory:',
+      QUEUE_STORAGE_PATH: ':memory:',
+    },
   },
 });

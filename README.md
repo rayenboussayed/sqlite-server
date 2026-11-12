@@ -1,114 +1,238 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# sqlite-server
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+SQLite needs a server too.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+`sqlite-server` exposes a centralized SQLite database to remote clients over HTTP + JSON, the way a network database server works — think Turso/libSQL, but self-hosted, single-process, and built directly on Node's built-in `node:sqlite` (no native module is required at runtime). Beyond the SQL endpoint it also serves a key/value store, a TTL cache, and a job queue, each backed by its own SQLite file.
 
-## Description
+**Features**
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- Arbitrary SQL over HTTP with positional `?` parameters, prepared-statement inspection, and all-or-nothing batches
+- Automatic detection of row-returning statements vs. mutations (no separate `/query` and `/execute` verbs)
+- KV storage and a TTL cache (`Keyv` + `@keyv/sqlite`) as independent SQLite files
+- SQS-lite job queue with visibility timeouts and delayed delivery
+- Header-based auth with constant-time comparison; only `/health` and `/api` are public
+- Zod v4 request validation, generated OpenAPI docs served as Swagger UI
+- Optional `sqlite-vec` extension for vector search
+- Zero external services: one Node process and some `.sqlite` files
 
-## Project setup
+All four feature groups — `/db`, `/kv`, `/cache`, `/queue` — are implemented, plus the auth layer, `/health`, and the `/api` docs page.
+
+## Requirements
+
+- **Node.js >= 24** — SQLite comes from the built-in `node:sqlite` module. `@keyv/sqlite` lists `better-sqlite3` as a dependency, but it is never used at runtime (the `node:sqlite` driver is preferred automatically), so nothing is compiled on a minimal setup.
+- npm (any recent version).
+
+## Quick start
 
 ```bash
-$ npm install
-```
+npm install
 
-## Compile and run the project
-
-```bash
-# development
-$ npm run start
+# development (compiles and runs via the Nest CLI)
+npm run start
 
 # watch mode
-$ npm run start:dev
-
-# production mode
-$ npm run start:prod
+npm run start:dev
 ```
 
-## Run tests
+Production:
 
 ```bash
-# unit tests
-$ npm run test
-
-# e2e tests
-$ npm run test:e2e
-
-# test coverage
-$ npm run test:cov
+npm run build
+npm run start:prod   # node dist/main
 ```
 
-## Deployment
+The server listens on `PORT` (default `3000`). Swagger UI is at <http://localhost:3000/api>, and the health probe is at <http://localhost:3000/health>.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Configuration
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+All configuration is read from environment variables by `src/environment.ts`, which parses them with zod **at import time** — an invalid value kills the process on boot rather than surfacing later.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SQLITE_DATABASE_PATH` | `<cwd>/database/database.sqlite` | SQL database file served by `/db/*`. |
+| `SQLITE_CACHE_PATH` | `<cwd>/database/cache.sqlite` | Cache store used by `/cache/*` (5-minute default TTL). |
+| `SQLITE_KV_PATH` | `<cwd>/database/kv.sqlite` | Key/value store used by `/kv/*` (no default TTL). |
+| `QUEUE_STORAGE_PATH` | `<cwd>/database/queue.sqlite` | Job queue storage. |
+| `SQLITE_READ_ONLY` | `false` | Opens the main SQL database read-only (`true`/`false`). Mutations then fail at the SQLite level. |
+| `DATABASE_EXTENSIONS` | unset | Comma-separated extensions to load. Only `vector` is accepted, which loads `sqlite-vec`; any other name fails validation at boot. |
+| `AUTH_USERNAME` | unset | Username for header auth. Must be set together with `AUTH_PASSWORD`. |
+| `AUTH_PASSWORD` | unset | Password for header auth. Must be set together with `AUTH_USERNAME`. |
+| `PORT` | `3000` | HTTP listen port. |
+
+Parent directories for all four database paths are created automatically, so `./database/` appears on first boot. Point the paths somewhere with real disk — these files are the only durable state.
+
+## Authentication
+
+Clients authenticate with two headers:
+
+```
+auth-username: <username>
+auth-password: <password>
+```
+
+- `GET /health` is exempt so load balancers and Kubernetes probes can reach it unauthenticated.
+- Comparisons are constant-time (`sha512` digests + `timingSafeEqual`), so neither the content nor the length of a credential leaks through timing.
+- If **both** `AUTH_USERNAME` and `AUTH_PASSWORD` are unset, auth is disabled and the server logs a prominent boot warning — anyone who can reach the port has full access.
+- If **only one** is set, every request fails with `401`. Partial configuration fails closed rather than silently accepting a half-secret.
+- No TLS is terminated in-process. Put nginx, Caddy, or another reverse proxy in front and **never expose the plaintext port to the internet** — credentials travel in headers.
+
+## API overview
+
+Interactive documentation is generated from the zod schemas and served at `GET /api` (Swagger UI). `/api` is public like `/health`: it serves documentation only and executes nothing — every API endpoint still requires auth. All POST endpoints return `200` on success.
+
+| Method | Path | Request body | Response |
+| --- | --- | --- | --- |
+| `GET` | `/health` | — | `{ "status": "ok" }` |
+| `POST` | `/db/query` | `{ sql, params?: (string \| number \| boolean \| null)[] }` | Rows: `{ sql, columns, rows, rowCount }`. Mutation: `{ sql, changes, lastInsertRowid }`. |
+| `POST` | `/db/prepare` | `{ sql }` | `{ sql, columns }` — validates the SQL and reports column metadata without executing it. |
+| `POST` | `/db/batch` | `{ statements: [{ sql, params? }] }` | `{ results: [...] }` — every statement runs inside one `BEGIN IMMEDIATE … COMMIT`; all-or-nothing. |
+| `POST` | `/kv/get` | `{ key }` or `[{ key }]` | `{ values: [...] }` — order-aligned with the request, `null` for missing keys. |
+| `POST` | `/kv/set` | `{ key, value, ttl? }` or an array of them | `{ results: [...] }` — one success flag per entry. |
+| `POST` | `/kv/delete` | `{ key }` or `[{ key }]` | `{ results: [...] }` — one success flag per key. |
+| `POST` | `/cache/get` | `{ key }` or `[{ key }]` | `{ values: [...] }` |
+| `POST` | `/cache/set` | `{ key, value, ttl? }` or an array of them | `{ results: [...] }`; `ttl` is milliseconds, default 5 minutes |
+| `POST` | `/cache/delete` | `{ key }` or `[{ key }]` | `{ results: [...] }` |
+| `POST` | `/queue/enqueue` | `{ jobs: [{ payload, delayMs? }] }` | `{ ids: [...] }` — payloads are any JSON values; `delayMs` defers availability |
+| `POST` | `/queue/dequeue` | `{ limit?, visibilityMs? }` or no body | `{ jobs: [{ id, payload }] }` — leases messages atomically (default 1 message, 30s lease) |
+| `POST` | `/queue/ack` | `{ ids: [...] }` | `{ acked: n }` — deletes leased messages |
+| `POST` | `/queue/nack` | `{ ids: [...] }` | `{ released: n }` — makes leased messages visible again |
+| `GET` | `/queue/size` | — | `{ pending: n }` — count of claimable messages |
+
+Notes:
+
+- **KV and cache payloads accept a singleton or an array.** Passing one object and passing a one-element array are equivalent, which keeps single-key calls terse and batch calls cheap. Keys are trimmed strings of 1–512 characters.
+- `params` are **positional only** — use `?` placeholders. Values may be `string`, `number`, `boolean`, or `null`; booleans are bound as `1`/`0` because SQLite has no boolean type. A statement accepts at most 999 parameters.
+- `columns` is an array of `{ name, type }`, where `type` is SQLite's declared type or `null` for expressions. Row-returning is decided from that metadata, so `SELECT`, `RETURNING`, and `PRAGMA` all come back as rows.
+- SQL text is capped at 1 MB, and a batch accepts at most 100 statements.
+- For bodyless POST endpoints (e.g. `/queue/dequeue` with defaults), either send no `Content-Type: application/json` header, or send an empty JSON object `{}` — Fastify rejects a declared-but-empty JSON body with 400. `/queue/size` is a `GET` route so it needs no body at all.
+- `/db/query` executes exactly one statement; a second statement in the same payload is rejected with 400 rather than silently truncated. Use `/db/batch` for multi-statement work. Note this also rules out `CREATE TRIGGER … BEGIN … END` over HTTP (its internal semicolons are rejected too).
+- Bad SQL, binding errors, and constraint violations come back as `400` with SQLite's message, not `500`.
+- KV has **no default TTL** — entries live until deleted, though a per-entry `ttl` is still honored. The cache defaults to 5 minutes and per-entry `ttl` overrides it.
+- `BEGIN`/`COMMIT`/`ROLLBACK`/`SAVEPOINT`/`RELEASE` are rejected everywhere except inside `/db/batch`, which owns the transaction lifecycle — this keeps the shared connection out of client-managed transactions. Use `/db/batch` for multi-statement work.
+- Queue semantics are SQS-lite: `dequeue` leases messages for `visibilityMs`, `ack` deletes leased messages, `nack` makes them visible again; an expired lease automatically becomes claimable. Payloads are stored as JSON text and parsed on delivery.
+
+## Examples
+
+Create a table, insert a row, and read it back:
 
 ```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
+AUTH=(-H 'auth-username: admin' -H 'auth-password: secret')
+
+# DDL — returned as a mutation
+curl -s http://localhost:3000/db/query \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"sql":"CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL)"}'
+
+# INSERT with a positional parameter
+curl -s http://localhost:3000/db/query \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"sql":"INSERT INTO notes (body) VALUES (?)","params":["hello"]}'
+# => {"sql":"INSERT INTO notes (body) VALUES (?)","changes":1,"lastInsertRowid":1}
+
+# SELECT — rows are objects keyed by column name
+curl -s http://localhost:3000/db/query \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"sql":"SELECT id, body FROM notes ORDER BY id"}'
+# => {"sql":"SELECT id, body FROM notes ORDER BY id",
+#     "columns":[{"name":"id","type":"INTEGER"},{"name":"body","type":"TEXT"}],
+#     "rows":[{"id":1,"body":"hello"}],"rowCount":1}
 ```
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+Key/value round-trip:
 
-## Observability
+```bash
+curl -s http://localhost:3000/kv/set \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"key":"greeting","value":{"text":"hi"}}'
 
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
+curl -s http://localhost:3000/kv/get \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"key":"greeting"}'
+# => {"values":[{"text":"hi"}]}
+```
 
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
+Atomic batch — the second statement fails, so the first is rolled back:
 
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
+```bash
+curl -s http://localhost:3000/db/batch \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"statements":[
+        {"sql":"INSERT INTO notes (body) VALUES (?)","params":["draft"]},
+        {"sql":"INSERT INTO notes (id, body) VALUES (?, ?)","params":[1,"duplicate id"]}
+      ]}'
+# => 400, and no row was inserted
+```
 
-## Resources
+Queue lifecycle:
 
-Check out a few resources that may come in handy when working with NestJS:
+```bash
+# enqueue one message with any JSON payload
+curl -s http://localhost:3000/queue/enqueue \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"jobs":[{"payload":{"job":"resize","id":42}}]}'
+# => {"ids":[1]}
 
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observer](https://observer.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
+# lease up to one message for 30 seconds (omit the body for defaults)
+curl -s http://localhost:3000/queue/dequeue \
+  -H 'content-type: application/json' "${AUTH[@]}" -d '{}'
+# => {"jobs":[{"id":1,"payload":{"job":"resize","id":42}}]}
 
-## Support
+curl -s http://localhost:3000/queue/ack \
+  -H 'content-type: application/json' "${AUTH[@]}" \
+  -d '{"ids":[1]}'
+# => {"acked":1}
+```
 
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
+## Security notes
 
-## Stay in touch
+Running arbitrary SQL is the entire point, so the credential check **is** the access-control layer. Read these before exposing the service anywhere.
 
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
+- **Always run behind auth and TLS.** An open instance is a remote shell for your data directory: any client can `DROP TABLE`, read every row, and write to the database file.
+- **`SQLITE_READ_ONLY=true`** is the right posture for public read-only exposure — writes are rejected by SQLite itself, not just by convention.
+- **`ATTACH`/`DETACH` are denied by design** through SQLite's authorizer callback. The server owns exactly one database; allowing `ATTACH` would let a client read arbitrary files on the host.
+- **The server is fully synchronous.** `node:sqlite` blocks the event loop, so one heavy query stalls every other request — including `/health`. Keep queries lean and indexed, and avoid unbounded `SELECT *` over large tables. There are no per-query timeouts or cost limits.
+- **Integer range is limited to ±2^53.** JSON has no bigint type and `readBigInts` is off; on reads, SQLite integers beyond ±2^53 are rejected by `node:sqlite` (surfaced as a 400). The service also converts `changes`/`lastInsertRowid` with `Number()`, which silently rounds beyond 2^53. Keep ids and counters within ±2^53 or store them as `TEXT`.
+- **No BLOB binding over JSON.** `params` accepts strings, numbers, booleans, and null. BLOB *values read back* arrive as JSON objects with numeric byte keys (e.g. `{"0": 255, …}`) — store binary data as base64 text in a column or in KV instead.
 
-## License
+## Development
 
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+```bash
+npm run test        # unit specs (vitest)
+npm run test:e2e    # e2e specs (vitest, vitest.config.e2e.ts)
+npm run test:cov    # unit tests + v8 coverage
+npm run lint        # oxlint
+npm run format      # prettier, rewrites src/ and test/
+npm run build       # nest build -> dist/
+```
+
+The repo uses **vitest**, not jest, and **oxlint**, not eslint. There is no separate typecheck script; `npm run build` (or `npx tsc --noEmit`) is the typecheck.
+
+Project layout:
+
+```
+src/
+  main.ts                 bootstrap: Fastify adapter, security headers, header versioning, Swagger at /api
+  app.module.ts           feature modules + global AuthInterceptor
+  environment.ts          zod-parsed env, creates database/ directories on import
+  auth.interceptor.ts     header auth, /health exemption, constant-time compare
+  database.ts             DatabaseSync wrapper: WAL, busy timeout, ATTACH guard, extension loading
+  kv.ts                   shared Keyv-over-SQLite factory for kv and cache
+  health.controller.ts    GET /health
+  resources/<feature>/    <feature>.module.ts | .controller.ts | .service.ts (+ schemas, .spec.ts)
+  resources/keyv.schema.ts    shared zod payloads for kv and cache
+  resources/keyv-storage.ts   shared Keyv batch helpers
+```
+
+Current features: `db` (SQL), `kv`, `cache`, `queue`. New features follow the same `src/resources/<feature>/` layout and are registered in `src/app.module.ts`.
+
+Because the project is ESM (`"type": "module"`, `nodenext`), relative imports must carry the `.js` suffix — `./app.module.js`, even from a `.ts` file. Types used on decorated method parameters need `import type` (TS1272 with `isolatedModules` + `emitDecoratorMetadata`).
+
+## Limitations / non-goals
+
+- **No replication or clustering.** One process, one writer, local files. Use Litestream-style file backup if you need durability beyond WAL.
+- **One statement per `/db/query`.** Multi-statement scripts go through `/db/batch`, which wraps them in a single `BEGIN IMMEDIATE` transaction.
+- **No named parameters.** Only positional `?` binding is supported.
+- **One SQL database per process.** `SQLITE_DATABASE_PATH` defines it; KV, cache, and queue each live in separate files and cannot be joined against it in SQL.
+- **No query cancellation, timeouts, or rate limiting.** Put a proxy in front if you need those.
+- No roles or per-database permissions — a single credential pair grants full access.
+- No migration framework or schema versioning: the database starts empty and you own the schema.

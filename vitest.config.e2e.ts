@@ -1,11 +1,17 @@
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [tsconfigPaths()],
+  resolve: { tsconfigPaths: true },
   test: {
     globals: true,
     root: './',
     include: ['**/*.e2e-spec.ts'],
+    // In-memory databases only — e2e tests never touch ./database/.
+    env: {
+      SQLITE_DATABASE_PATH: ':memory:',
+      SQLITE_CACHE_PATH: ':memory:',
+      SQLITE_KV_PATH: ':memory:',
+      QUEUE_STORAGE_PATH: ':memory:',
+    },
   },
 });

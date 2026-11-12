@@ -1,20 +1,18 @@
 import Keyv from 'keyv';
 import KeyvSqlite from '@keyv/sqlite';
-import { lazy } from 'jutilities/lazy';
-import { withCacheAsync } from 'jutilities/cache';
-import { sha512 } from './utils.js';
 
-class KeyValue extends Keyv {
-
-
-  setMany<Value = any>(entries: KeyvEntry<Value>[]): Promise<boolean[]> {
-    return withCacheAsync(super.setMany.bind(this), { generateCacheKey(options) {
-      return sha512()
-    }, })
-  }
+/**
+ * Creates a Keyv instance backed by a SQLite file (via `@keyv/sqlite`,
+ * which auto-detects the built-in `node:sqlite` driver — no native
+ * dependencies required).
+ *
+ * Instances are cheap to create but hold an open connection, so callers
+ * should create exactly one per path at module scope (see the kv/cache
+ * services) and reuse it for the process lifetime.
+ *
+ * Note: `KeyvSqlite` is initialized asynchronously; the first operation on
+ * a fresh instance awaits schema setup transparently.
+ */
+export function createSqliteKeyv({ uri, ttl }: { uri: string; ttl: number }) {
+  return new Keyv(new KeyvSqlite({ uri }), { ttl });
 }
-
-
-export const createSqliteKeyv = lazy(
-  (options: {uri: string, ttl?:number}) => new Keyv(new KeyvSqlite(options), options),
-);
