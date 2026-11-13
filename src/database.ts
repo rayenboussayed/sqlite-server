@@ -99,8 +99,10 @@ export class Database extends DatabaseSync {
       return storedValue;
     }
 
+    // A fresh node:sqlite handle is always open, so there is nothing to
+    // re-open here — reopening a closed handle happens via the memoized
+    // path above.
     const database = new Database(filePath);
-    if (!database.isOpen) database.open();
     Database.__instances.set(filePath, database);
     return database;
   }

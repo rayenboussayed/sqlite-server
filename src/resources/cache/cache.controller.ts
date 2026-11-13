@@ -1,11 +1,19 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common';
 import { CacheService } from './cache.service.js';
 import { DeleteSchema, GetSchema, SetSchema } from '../keyv.schema.js';
 import type { DeleteType, GetType, SetType } from '../keyv.schema.js';
 
+// A class-typed constructor parameter would make oxc emit a `typeof X ===
+// "undefined" ? Object : X` paramtypes guard (mapped to the @Controller
+// line) that no test can reach. @Inject supplies the DI token instead.
+type CacheServiceContract = Pick<CacheService, 'get' | 'set' | 'remove'>;
+
 @Controller('cache')
 export class CacheController {
-  constructor(private readonly cacheService: CacheService) {}
+  constructor(
+    @Inject(CacheService)
+    private readonly cacheService: CacheServiceContract,
+  ) {}
 
   /** `{ values: [...] }` — order-aligned with the request; `undefined` becomes `null` in JSON. */
   @HttpCode(HttpStatus.OK)

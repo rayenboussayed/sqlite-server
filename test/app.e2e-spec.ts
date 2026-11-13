@@ -377,7 +377,7 @@ describe('sqlite-server (e2e)', () => {
     it('expires an entry according to its per-entry ttl', async () => {
       const set = await api()
         .post('/cache/set')
-        .send({ key: 'ephemeral', value: 'soon gone', ttl: 300 })
+        .send({ key: 'ephemeral', value: 'soon gone', ttl: 100 })
         .expect(200);
 
       expect(set.body).toEqual({ results: [true] });
@@ -389,7 +389,7 @@ describe('sqlite-server (e2e)', () => {
 
       expect(hit.body).toEqual({ values: ['soon gone'] });
 
-      await new Promise((resolve) => setTimeout(resolve, 500));
+      await new Promise((resolve) => setTimeout(resolve, 200));
 
       const miss = await api()
         .post('/cache/get')

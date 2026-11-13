@@ -1,4 +1,4 @@
-import { Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common';
 import { DbService } from './db.service.js';
 import { BatchSchema, PrepareSchema, QuerySchema } from './db.schema.js';
 import type {
@@ -10,9 +10,17 @@ import type {
   QueryType,
 } from './db.schema.js';
 
+// A class-typed constructor parameter would make oxc emit a `typeof X ===
+// "undefined" ? Object : X` paramtypes guard (mapped to the @Controller
+// line) that no test can reach. @Inject supplies the DI token instead.
+type DbServiceContract = Pick<DbService, 'query' | 'prepareOnly' | 'batch'>;
+
 @Controller('db')
 export class DbController {
-  constructor(private readonly dbService: DbService) {}
+  constructor(
+    @Inject(DbService)
+    private readonly dbService: DbServiceContract,
+  ) {}
 
   @HttpCode(HttpStatus.OK)
   @Post('query')

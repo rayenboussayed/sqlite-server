@@ -25,6 +25,14 @@ describe('CacheService', () => {
     expect(values).toEqual([{ id: 1, roles: ['admin'] }, 7]);
   });
 
+  it('reports removal, including a repeat delete', async () => {
+    await service.set([{ key: 'gone', value: 1 }]);
+
+    expect(await service.remove(['gone'])).toEqual([true]);
+    expect(await service.remove(['gone'])).toEqual([false]);
+    expect(await service.get(['gone'])).toEqual([undefined]);
+  });
+
   it('honours a per-entry ttl override', async () => {
     await service.set([{ key: 'ephemeral', value: 'gone soon', ttl: 1 }]);
 

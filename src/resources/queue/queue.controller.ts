@@ -1,11 +1,22 @@
-import { Body, Controller, Get, HttpCode, HttpStatus, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Inject, Post } from '@nestjs/common';
 import { QueueService } from './queue.service.js';
 import { DequeueSchema, EnqueueSchema, IdsSchema } from './schema.js';
 import type { DequeueType, EnqueueType, IdsType } from './schema.js';
 
+// A class-typed constructor parameter would make oxc emit a `typeof X ===
+// "undefined" ? Object : X` paramtypes guard (mapped to the @Controller
+// line) that no test can reach. @Inject supplies the DI token instead.
+type QueueServiceContract = Pick<
+  QueueService,
+  'enqueue' | 'dequeue' | 'ack' | 'nack' | 'size'
+>;
+
 @Controller('queue')
 export class QueueController {
-  constructor(private readonly queueService: QueueService) {}
+  constructor(
+    @Inject(QueueService)
+    private readonly queueService: QueueServiceContract,
+  ) {}
 
   @HttpCode(HttpStatus.OK)
   @Post('enqueue')

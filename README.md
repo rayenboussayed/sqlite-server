@@ -197,22 +197,31 @@ Running arbitrary SQL is the entire point, so the credential check **is** the ac
 ## Development
 
 ```bash
-npm run test        # unit specs (vitest)
-npm run test:e2e    # e2e specs (vitest, vitest.config.e2e.ts)
-npm run test:cov    # unit tests + v8 coverage
-npm run lint        # oxlint
-npm run format      # prettier, rewrites src/ and test/
-npm run build       # nest build -> dist/
+npm run test          # unit specs (vitest)
+npm run test:e2e      # e2e specs (vitest, vitest.config.e2e.ts)
+npm run test:cov      # unit tests + v8 coverage, enforced at 100% (src/**/*.ts)
+npm run test:memory   # heap-regression loops in forks with --expose-gc (no coverage)
+npm run lint          # oxlint
+npm run format        # prettier, rewrites src/, test/ and bench/
+npm run build         # nest build -> dist/
+npm run bench         # storage-path benchmarks (vitest bench, advisory numbers)
+npm run typecheck:bench # typecheck src/, test/ and bench/ (bench/ escapes nest build)
 ```
 
-The repo uses **vitest**, not jest, and **oxlint**, not eslint. There is no separate typecheck script; `npm run build` (or `npx tsc --noEmit`) is the typecheck.
+The repo uses **vitest**, not jest, and **oxlint**, not eslint. There is no separate typecheck script for `src/`; `npm run build` (or `npx tsc --noEmit`) is the typecheck — `npm run typecheck:bench` covers `src/`, `test/` and `bench/` together. Unit-test coverage is scoped to `src/**/*.ts` and gated at **100%** (statements/branches/functions/lines) by `vitest.config.ts` thresholds; `npm run test:cov` fails otherwise.
+
+## Benchmarks and memory tests
+
+`npm run bench` prints throughput and latency percentiles for the storage paths (`/db` query and batch, `/kv` and `/cache` get/set in 1–900-key batches straddling Keyv's 998-parameter `IN (…)` cap, `/queue` enqueue / claim / ack / size). Numbers are **advisory and machine-local**: vitest 4's bench mode has no assertion support, and `npm run bench:compare` against a `bench/baseline.json` (which you would generate with `npm run bench -- --outputJson` locally) only annotates the table — it never fails. Baselines are gitignored on purpose; don't commit one. Set `BENCH_DB_PATH=/tmp/bench.sqlite` to measure the WAL file path instead of `:memory:`.
+
+`npm run test:memory` runs the heap-regression loops (`test/memory/`): 10k KV get/set cycles, 5k queue enqueue → dequeue → ack cycles, and the `Database.new` memoization contract. It runs in a dedicated single-fork config (`vitest.config.memory.ts`) with `--expose-gc`, asserts on `heapUsed` deltas only (RSS includes node:sqlite's native buffers and is not a leak signal), and is deliberately **outside** the 100% coverage gate. Profile artifacts (`*.cpuprofile`, `*.heapprofile`, `*.heapsnapshot`) are gitignored; generate them on demand with `npm run test:profile`. Everything bench-related is opt-in — the CI gate (`lint → test:cov → e2e → build`) is unchanged.
 
 Project layout:
 
 ```
 src/
-  main.ts                 bootstrap: Fastify adapter, security headers, header versioning, Swagger at /api
-  app.module.ts           feature modules + global AuthInterceptor
+  main.ts                 bootstrap: Fastify adapter, security headers, CSRF, Swagger at /api
+  app.module.ts           feature modules + global AuthInterceptor + StandardSchemaValidationPipe
   environment.ts          zod-parsed env, creates database/ directories on import
   auth.interceptor.ts     header auth, /health exemption, constant-time compare
   database.ts             DatabaseSync wrapper: WAL, busy timeout, ATTACH guard, extension loading
@@ -220,7 +229,12 @@ src/
   health.controller.ts    GET /health
   resources/<feature>/    <feature>.module.ts | .controller.ts | .service.ts (+ schemas, .spec.ts)
   resources/keyv.schema.ts    shared zod payloads for kv and cache
-  resources/keyv-storage.ts   shared Keyv batch helpers
+bench/
+  *.bench.ts              vitest bench storage-path benchmarks (not run by tests, not covered)
+test/
+  *.e2e-spec.ts           e2e suite (vitest.config.e2e.ts)
+  memory/*.memory.test.ts heap-regression loops (vitest.config.memory.ts, --expose-gc)
+  helpers/measureHeap.ts  warmup/measure helper shared by the memory suite
 ```
 
 Current features: `db` (SQL), `kv`, `cache`, `queue`. New features follow the same `src/resources/<feature>/` layout and are registered in `src/app.module.ts`.

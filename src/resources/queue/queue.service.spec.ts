@@ -64,15 +64,21 @@ describe('QueueService', () => {
     expect(jobs.map((job) => job.id)).toEqual(ids);
   });
 
-  it('holds delayed jobs until their delay elapses', async () => {
-    enqueueOne('later', 30);
+  it('holds delayed jobs while their delay is pending', () => {
+    // Long delay: the negative assertions stay true no matter how long the
+    // event loop pauses between statements.
+    enqueueOne('later', 10_000);
 
     expect(service.size()).toEqual({ pending: 0 });
-    expect(service.dequeue({ limit: 10, visibilityMs: 30_000 }).jobs).toEqual(
-      [],
-    );
+    expect(
+      service.dequeue({ limit: 10, visibilityMs: 30_000 }).jobs,
+    ).toEqual([]);
+  });
 
-    await sleep(80);
+  it('releases a delayed job once its delay elapses', async () => {
+    enqueueOne('later', 30);
+
+    await sleep(100);
 
     expect(service.size()).toEqual({ pending: 1 });
 
@@ -128,5 +134,54 @@ describe('QueueService', () => {
     expect(ids).toHaveLength(3);
     expect(new Set(ids).size).toBe(3);
     expect(service.size()).toEqual({ pending: 3 });
+  });
+
+  it('rolls the transaction back when a job fails to enqueue', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    expect(() =>
+      service.enqueue({
+        jobs: [{ payload: circular as never, delayMs: 0 }],
+      }),
+    ).toThrow(TypeError);
+
+    expect(service.size()).toEqual({ pending: 0 });
+  });
+
+  it('keeps the original error when the rollback itself fails', () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+
+    const database = service['database'] as unknown as {
+      exec: (sql: string) => void;
+    };
+    const originalExec = database.exec.bind(database);
+    const spy = vi.spyOn(database, 'exec').mockImplementation((sql) => {
+      if (sql === 'ROLLBACK') throw new Error('rollback failed');
+      originalExec(sql);
+    });
+
+    try {
+      expect(() =>
+        service.enqueue({
+          jobs: [{ payload: circular as never, delayMs: 0 }],
+        }),
+      ).toThrow(TypeError);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('reports zero pending when the count query returns no row', () => {
+    const spy = vi
+      .spyOn(service['database'], 'prepare')
+      .mockReturnValue({ get: () => undefined } as never);
+
+    try {
+      expect(service.size()).toEqual({ pending: 0 });
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

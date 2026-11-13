@@ -12,17 +12,22 @@
   "scripts": {
     "build": "nest build",
     "deploy": "nest deploy",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"bench/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "node dist/main",
-    "lint": "oxlint src/ test/",
+    "lint": "oxlint src/ test/ bench/",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
     "test:debug": "vitest --inspect-brk --no-file-parallelism",
-    "test:e2e": "vitest run --config ./vitest.config.e2e.ts"
+    "test:e2e": "vitest run --config ./vitest.config.e2e.ts",
+    "test:memory": "vitest run --config ./vitest.config.memory.ts --reporter=verbose",
+    "test:profile": "vitest run --no-file-parallelism --execArgv=--cpu-prof --execArgv=--cpu-prof-dir=./bench/profiles",
+    "bench": "vitest bench --config ./vitest.bench.config.ts --run",
+    "bench:compare": "vitest bench --config ./vitest.bench.config.ts --run --compare ./bench/baseline.json",
+    "typecheck:bench": "tsc --noEmit -p tsconfig.bench.json"
   },
   "dependencies": {
     "@fastify/static": "^10.1.10",
@@ -36,6 +41,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "sqlite-vec": "^0.1.9",
+    "tslib": "^2.9.1",
     "zod": "^4.6.5",
     "zod-openapi": "^6.0.2"
   },

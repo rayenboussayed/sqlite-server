@@ -1,4 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import {
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import { DbService } from './db.service.js';
 import type { QueryChangesResult, QueryRowsResult } from './db.schema.js';
@@ -149,5 +152,154 @@ describe('DbService', () => {
     }) as QueryRowsResult;
 
     expect(remaining.rows[0].count).toBe(0);
+  });
+
+  it('maps a runtime statement failure to 400', () => {
+    expect(() =>
+      service.query({
+        sql: 'INSERT INTO missing_table (name) VALUES (?)',
+        params: ['x'],
+      }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('maps a statement that fails at execution time to 400', () => {
+    service.query({
+      sql: 'CREATE TABLE strict_items (id INTEGER PRIMARY KEY, name TEXT NOT NULL)',
+      params: [],
+    });
+
+    expect(() =>
+      service.query({
+        sql: 'INSERT INTO strict_items (name) VALUES (?)',
+        params: [null],
+      }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('maps unexpected failures to a 500 without leaking internals', () => {
+    const spy = vi
+      .spyOn(service.database, 'prepare')
+      .mockImplementation((() => {
+        throw new Error('boom');
+      }) as never);
+
+    try {
+      expect(() => service.query({ sql: 'SELECT 1', params: [] })).toThrow(
+        InternalServerErrorException,
+      );
+      expect(() => service.query({ sql: 'SELECT 1', params: [] })).toThrow(
+        'Unexpected database error.',
+      );
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('rejects multiple statements in one call', () => {
+    expect(() =>
+      service.query({ sql: 'SELECT 1; SELECT 2', params: [] }),
+    ).toThrow(BadRequestException);
+    expect(() =>
+      service.prepareOnly({ sql: 'SELECT 1; SELECT 2' }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('allows comments around a single statement', () => {
+    const trailing = service.query({
+      sql: 'SELECT 1 -- trailing',
+      params: [],
+    }) as QueryRowsResult;
+    expect(trailing.rowCount).toBe(1);
+
+    const leading = service.query({
+      sql: '-- leading comment\nSELECT 1',
+      params: [],
+    }) as QueryRowsResult;
+    expect(leading.rowCount).toBe(1);
+
+    const terminatedBlock = service.query({
+      sql: 'SELECT 1 /* terminated */',
+      params: [],
+    }) as QueryRowsResult;
+    expect(terminatedBlock.rowCount).toBe(1);
+
+    const unterminatedBlock = service.query({
+      sql: 'SELECT 1 /* unterminated',
+      params: [],
+    }) as QueryRowsResult;
+    expect(unterminatedBlock.rowCount).toBe(1);
+  });
+
+  it('rejects a second statement hidden after a comment', () => {
+    expect(() =>
+      service.query({ sql: 'SELECT 1; -- smuggled\nSELECT 2', params: [] }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('does not confuse operators with comment or quote openings', () => {
+    const subtraction = service.query({
+      sql: 'SELECT 5 - 3 AS diff',
+      params: [],
+    }) as QueryRowsResult;
+    expect(subtraction.rows[0].diff).toBe(2);
+
+    const division = service.query({
+      sql: 'SELECT 6 / 3 AS quotient',
+      params: [],
+    }) as QueryRowsResult;
+    expect(division.rows[0].quotient).toBe(2);
+  });
+
+  it('handles doubled quotes inside string literals', () => {
+    const result = service.query({
+      sql: "SELECT 'it''s' AS greeting",
+      params: [],
+    }) as QueryRowsResult;
+
+    expect(result.rows[0].greeting).toBe("it's");
+  });
+
+  it('handles and rejects bracketed identifiers', () => {
+    createItemsTable();
+
+    const bracketed = service.query({
+      sql: 'SELECT [id] FROM items',
+      params: [],
+    }) as QueryRowsResult;
+    expect(bracketed.rowCount).toBe(0);
+
+    expect(() =>
+      service.query({ sql: 'SELECT [id', params: [] }),
+    ).toThrow(BadRequestException);
+  });
+
+  it('accepts a single statement terminated by a semicolon', () => {
+    const result = service.query({
+      sql: 'SELECT 1;',
+      params: [],
+    }) as QueryRowsResult;
+
+    expect(result.rowCount).toBe(1);
+  });
+
+  it('fails the batch with 400 when a transaction is already open', () => {
+    service.database.withTransactionControl(() =>
+      service.database.exec('BEGIN'),
+    );
+
+    try {
+      expect(() =>
+        service.batch({
+          statements: [
+            { sql: 'CREATE TABLE impossible (id INTEGER)', params: [] },
+          ],
+        }),
+      ).toThrow(BadRequestException);
+    } finally {
+      service.database.withTransactionControl(() =>
+        service.database.exec('ROLLBACK'),
+      );
+    }
   });
 });
